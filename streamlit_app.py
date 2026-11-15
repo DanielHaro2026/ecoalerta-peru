@@ -1,5 +1,4 @@
-
-import streamlit as st
+﻿import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
@@ -218,6 +217,7 @@ def seasonal_mann_kendall_bootstrap(
         slope = 0.0
 
     # Remove the estimated trend under the null hypothesis.
+
     centered_years = years - years.mean()
 
     residuals = matrix - (
@@ -229,7 +229,6 @@ def seasonal_mann_kendall_bootstrap(
         axis=0,
         keepdims=True
     )
-
     rng = np.random.default_rng(RANDOM_SEED)
 
     block_lengths = [2, 3, 4]
@@ -404,11 +403,11 @@ st.header("NASA GPM IMERG Dataset")
 st.markdown("""
 - **Source:** NASA Global Precipitation Measurement
 - **Product:** GPM_3IMERGM Version 07
-- **Variable:** Merged satellite-gauge precipitation estimate – Final Run
+- **Variable:** Merged satellite-gauge precipitation estimate -“ Final Run
 - **Temporal resolution:** Monthly
 - **Spatial selection:** Peru
 - **Measurement unit:** mm/hr
-- **Observation period:** January 1998 – September 2025
+- **Observation period:** January 1998 -“ September 2025
 """)
 
 st.divider()
@@ -711,7 +710,7 @@ try:
             reg1, reg2, reg3 = st.columns(3)
 
             reg1.metric(
-                "Annual Regression R²",
+                "Annual Regression R-squared",
                 f"{regression.rvalue ** 2:.4f}"
             )
 
