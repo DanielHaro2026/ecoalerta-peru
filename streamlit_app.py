@@ -29,7 +29,7 @@ RANDOM_SEED = 42
 
 
 # =========================================================
-# 2. DATA LOADING AND CLEANING
+# 2. DATA LOADING
 # =========================================================
 
 @st.cache_data
@@ -48,32 +48,25 @@ def load_data():
 
     df.columns = df.columns.str.strip()
 
-    required_columns = [
+    required = [
         "time",
         "mean_GPM_3IMERGM_07_precipitation"
     ]
 
-    missing_columns = [
-        col for col in required_columns
-        if col not in df.columns
-    ]
+    missing = [c for c in required if c not in df.columns]
 
-    if missing_columns:
-        raise ValueError(
-            f"Missing CSV columns: {missing_columns}"
-        )
+    if missing:
+        raise ValueError(f"Missing CSV columns: {missing}")
 
-    df = df[required_columns].copy()
+    df = df[required].copy()
     df.columns = ["Date", "Precipitation"]
 
     df["Date"] = pd.to_datetime(
-        df["Date"],
-        errors="coerce"
+        df["Date"], errors="coerce"
     )
 
     df["Precipitation"] = pd.to_numeric(
-        df["Precipitation"],
-        errors="coerce"
+        df["Precipitation"], errors="coerce"
     )
 
     df.loc[
@@ -89,9 +82,7 @@ def load_data():
     )
 
     if df.empty:
-        raise ValueError(
-            "The dataset contains no valid observations."
-        )
+        raise ValueError("No valid NASA observations found.")
 
     return df
 
@@ -132,28 +123,21 @@ def seasonal_sen_slope(df):
 
         for i in range(len(y) - 1):
 
-            time_difference = x[i + 1:] - x[i]
-            value_difference = y[i + 1:] - y[i]
+            dx = x[i + 1:] - x[i]
+            dy = y[i + 1:] - y[i]
 
-            valid = time_difference > 0
+            valid = dx > 0
 
             if valid.any():
-
-                pairwise_slopes = (
-                    value_difference[valid]
-                    / time_difference[valid]
+                slopes.extend(
+                    (dy[valid] / dx[valid]).tolist()
                 )
 
-                slopes.extend(pairwise_slopes.tolist())
-
-    if not slopes:
-        return np.nan
-
-    return float(np.median(slopes))
+    return float(np.median(slopes)) if slopes else np.nan
 
 
 # =========================================================
-# 5. SEASONAL MANN-KENDALL S STATISTIC
+# 5. SEASONAL MANN-KENDALL STATISTIC
 # =========================================================
 
 def seasonal_s_statistic(matrix):
@@ -166,7 +150,6 @@ def seasonal_s_statistic(matrix):
         values = values[np.isfinite(values)]
 
         for i in range(len(values) - 1):
-
             total_s += np.sign(
                 values[i + 1:] - values[i]
             ).sum()
@@ -201,7 +184,7 @@ def seasonal_mann_kendall_bootstrap(
         columns=range(1, 13)
     )
 
-    # Use complete calendar years for block resampling.
+    # Only complete calendar years are used.
     matrix_df = matrix_df.dropna(
         axis=0,
         how="any"
@@ -229,19 +212,16 @@ def seasonal_mann_kendall_bootstrap(
         data["Year"].isin(matrix_df.index)
     ].copy()
 
-    estimated_slope = seasonal_sen_slope(
-        complete_data
-    )
+    slope = seasonal_sen_slope(complete_data)
 
-    if not np.isfinite(estimated_slope):
-        estimated_slope = 0.0
+    if not np.isfinite(slope):
+        slope = 0.0
 
-    # Detrend the observations before resampling.
+    # Remove the estimated trend under the null hypothesis.
     centered_years = years - years.mean()
 
     residuals = matrix - (
-        estimated_slope
-        * centered_years[:, np.newaxis]
+        slope * centered_years[:, np.newaxis]
     )
 
     # Center each calendar month independently.
@@ -266,8 +246,8 @@ def seasonal_mann_kendall_bootstrap(
         for _ in range(bootstrap_reps):
 
             starts = rng.integers(
-                low=0,
-                high=n_years,
+                0,
+                n_years,
                 size=blocks_needed
             )
 
@@ -279,9 +259,7 @@ def seasonal_mann_kendall_bootstrap(
                     start + np.arange(block_length)
                 ) % n_years
 
-                indices.extend(
-                    block_indices.tolist()
-                )
+                indices.extend(block_indices.tolist())
 
             indices = np.asarray(
                 indices[:n_years],
@@ -307,21 +285,18 @@ def seasonal_mann_kendall_bootstrap(
             empirical_p
         )
 
-    # Conservative sensitivity value across block lengths.
+    # Conservative sensitivity result.
     final_p_value = max(
         block_p_values.values()
     )
 
     if final_p_value < ALPHA and observed_s > 0:
-
         trend = "Increasing"
 
     elif final_p_value < ALPHA and observed_s < 0:
-
         trend = "Decreasing"
 
     else:
-
         trend = "No statistically significant trend"
 
     return {
@@ -335,7 +310,7 @@ def seasonal_mann_kendall_bootstrap(
 
 
 # =========================================================
-# 7. TEMPORAL AUTOCORRELATION DIAGNOSTIC
+# 7. TEMPORAL AUTOCORRELATION
 # =========================================================
 
 def seasonal_autocorrelation(df):
@@ -360,28 +335,24 @@ def seasonal_autocorrelation(df):
         first = values[:-1]
         second = values[1:]
 
-        if (
-            np.std(first) == 0
-            or np.std(second) == 0
-        ):
+        if np.std(first) == 0 or np.std(second) == 0:
             continue
 
         correlation = np.corrcoef(
-            first,
-            second
+            first, second
         )[0, 1]
 
         if np.isfinite(correlation):
             correlations.append(correlation)
 
-    if not correlations:
-        return np.nan
-
-    return float(np.median(correlations))
+    return (
+        float(np.median(correlations))
+        if correlations else np.nan
+    )
 
 
 # =========================================================
-# 8. ANNUAL LINEAR REGRESSION
+# 8. ANNUAL REGRESSION
 # =========================================================
 
 def annual_regression(df):
@@ -412,9 +383,7 @@ def annual_regression(df):
 
 st.title("🌎 ECOALERTA PERU")
 
-st.subheader(
-    "Earth System Trend Explorer"
-)
+st.subheader("Earth System Trend Explorer")
 
 st.markdown("""
 **SPACE HACKERS UPRIT** | NASA Space Apps Challenge
@@ -453,13 +422,9 @@ try:
 
     df = load_data()
 
-    st.success(
-        "NASA GPM dataset loaded successfully."
-    )
+    st.success("NASA GPM dataset loaded successfully.")
 
-    # -----------------------------------------------------
     # DATA QUALITY
-    # -----------------------------------------------------
 
     expected_dates = pd.date_range(
         start=df["Date"].min().to_period("M").to_timestamp(),
@@ -477,30 +442,21 @@ try:
 
     col1, col2, col3 = st.columns(3)
 
-    col1.metric(
-        "Valid Monthly Records",
-        f"{len(df):,}"
-    )
-
+    col1.metric("Valid Monthly Records", f"{len(df):,}")
     col2.metric(
         "First Observation",
         df["Date"].min().strftime("%B %Y")
     )
-
     col3.metric(
         "Latest Observation",
         df["Date"].max().strftime("%B %Y")
     )
 
-    if missing_months > 0:
-
+    if missing_months:
         st.warning(
-            f"{missing_months} missing calendar months "
-            "were detected in the observation period."
+            f"{missing_months} missing calendar months detected."
         )
-
     else:
-
         st.info(
             "No missing calendar months were detected "
             "between the first and last observations."
@@ -508,9 +464,7 @@ try:
 
     st.divider()
 
-    # -----------------------------------------------------
     # DATE FILTER
-    # -----------------------------------------------------
 
     st.header("Precipitation Trend Explorer")
 
@@ -537,7 +491,6 @@ try:
         ].copy()
 
     else:
-
         filtered_df = df.copy()
 
     if len(filtered_df) < 24:
@@ -549,13 +502,9 @@ try:
 
     else:
 
-        # -------------------------------------------------
         # MONTHLY TIME SERIES
-        # -------------------------------------------------
 
-        st.subheader(
-            "Monthly Precipitation Time Series"
-        )
+        st.subheader("Monthly Precipitation Time Series")
 
         monthly_fig = px.line(
             filtered_df,
@@ -577,9 +526,7 @@ try:
             use_container_width=True
         )
 
-        # -------------------------------------------------
         # DESCRIPTIVE STATISTICS
-        # -------------------------------------------------
 
         st.header("Descriptive Statistics")
 
@@ -602,9 +549,7 @@ try:
 
         st.divider()
 
-        # -------------------------------------------------
-        # STATISTICAL TREND ANALYSIS
-        # -------------------------------------------------
+        # STATISTICAL ANALYSIS
 
         st.header("Statistical Trend Analysis")
 
@@ -618,9 +563,7 @@ try:
             filtered_df
         )
 
-        sen_slope = seasonal_sen_slope(
-            filtered_df
-        )
+        sen_slope = seasonal_sen_slope(filtered_df)
 
         autocorrelation = seasonal_autocorrelation(
             filtered_df
@@ -630,42 +573,34 @@ try:
             filtered_df
         )
 
-        # -------------------------------------------------
-        # STATISTICAL METRICS
-        # -------------------------------------------------
+        # METRICS
 
         col_a, col_b, col_c = st.columns(3)
 
+        p_value = seasonal_result["p_value"]
+
         col_a.metric(
             "Block-bootstrap Seasonal MK p-value",
-            (
-                f"{seasonal_result['p_value']:.3e}"
-                if np.isfinite(seasonal_result["p_value"])
-                else "Not available"
-            )
+            f"{p_value:.3e}"
+            if np.isfinite(p_value)
+            else "Not available"
         )
 
         col_b.metric(
             "Seasonal Sen's Slope",
-            (
-                f"{sen_slope:.6f} mm/hr/year"
-                if np.isfinite(sen_slope)
-                else "Not available"
-            )
+            f"{sen_slope:.6f} mm/hr/year"
+            if np.isfinite(sen_slope)
+            else "Not available"
         )
 
         col_c.metric(
             "Median Lag-1 Autocorrelation",
-            (
-                f"{autocorrelation:.4f}"
-                if np.isfinite(autocorrelation)
-                else "Not available"
-            )
+            f"{autocorrelation:.4f}"
+            if np.isfinite(autocorrelation)
+            else "Not available"
         )
 
-        # -------------------------------------------------
         # TREND CLASSIFICATION
-        # -------------------------------------------------
 
         st.subheader("Trend Classification")
 
@@ -702,13 +637,9 @@ try:
                 "to perform the block-bootstrap analysis."
             )
 
-        # -------------------------------------------------
         # BOOTSTRAP SENSITIVITY
-        # -------------------------------------------------
 
-        st.subheader(
-            "Block Bootstrap Sensitivity Analysis"
-        )
+        st.subheader("Block Bootstrap Sensitivity Analysis")
 
         st.markdown("""
         The analysis evaluates three block lengths.
@@ -722,9 +653,9 @@ try:
                 [
                     {
                         "Block Length (years)": block_length,
-                        "Empirical p-value": p_value
+                        "Empirical p-value": value
                     }
-                    for block_length, p_value
+                    for block_length, value
                     in seasonal_result["block_p_values"].items()
                 ]
             )
@@ -736,20 +667,15 @@ try:
             )
 
             st.caption(
-                f"Complete years used: "
-                f"{seasonal_result['complete_years']} | "
+                f"Complete years used: {seasonal_result['complete_years']} | "
                 f"Bootstrap repetitions per block length: "
                 f"{seasonal_result['bootstrap_reps']} | "
                 f"Random seed: {RANDOM_SEED}"
             )
 
-        # -------------------------------------------------
         # AUTOCORRELATION DIAGNOSTIC
-        # -------------------------------------------------
 
-        st.subheader(
-            "Temporal Dependence Diagnostic"
-        )
+        st.subheader("Temporal Dependence Diagnostic")
 
         if np.isfinite(autocorrelation):
 
@@ -774,15 +700,11 @@ try:
                 "Autocorrelation could not be estimated reliably."
             )
 
-        # -------------------------------------------------
         # ANNUAL REGRESSION
-        # -------------------------------------------------
 
         st.divider()
 
-        st.subheader(
-            "Annual Mean Precipitation Trend"
-        )
+        st.subheader("Annual Mean Precipitation Trend")
 
         if regression is not None:
 
@@ -845,53 +767,233 @@ try:
                 "for annual linear regression."
             )
 
-        # -------------------------------------------------
-        # STATISTICAL METHODOLOGY AND LIMITATIONS
-        # -------------------------------------------------
+        # =================================================
+        # 12. KEY SCIENTIFIC FINDINGS
+        # =================================================
+
+        st.divider()
+
+        st.header("Key Scientific Findings")
+
+        if seasonal_result["trend"] == "Decreasing":
+
+            st.markdown("""
+            ### Decreasing precipitation trend detected
+
+            The seasonal trend analysis indicates a decreasing
+            direction in the spatially averaged precipitation
+            observations for Peru.
+            """)
+
+        elif seasonal_result["trend"] == "Increasing":
+
+            st.markdown("""
+            ### Increasing precipitation trend detected
+
+            The seasonal trend analysis indicates an increasing
+            direction in the spatially averaged precipitation
+            observations for Peru.
+            """)
+
+        elif seasonal_result["trend"] == "No statistically significant trend":
+
+            st.markdown("""
+            ### No statistically significant monotonic trend detected
+
+            The current analysis does not provide sufficient
+            evidence of a monotonic precipitation trend at the
+            selected significance level.
+            """)
+
+        else:
+
+            st.markdown("""
+            ### Insufficient data for trend classification
+
+            More complete calendar years are required for the
+            block-bootstrap seasonal analysis.
+            """)
+
+        # SCIENTIFIC EVIDENCE
+
+        st.subheader("Scientific Evidence")
+
+        finding1, finding2 = st.columns(2)
+
+        finding1.metric(
+            "Seasonal Trend Slope",
+            f"{sen_slope:.6f} mm/hr/year"
+            if np.isfinite(sen_slope)
+            else "Not available"
+        )
+
+        finding2.metric(
+            "Bootstrap p-value",
+            f"{p_value:.3e}"
+            if np.isfinite(p_value)
+            else "Not available"
+        )
+
+        if (
+            np.isfinite(p_value)
+            and p_value < ALPHA
+            and seasonal_result["trend"] in [
+                "Increasing",
+                "Decreasing"
+            ]
+        ):
+
+            st.markdown("""
+            The block-bootstrap sensitivity procedure produced
+            a p-value below the 0.05 threshold. This provides
+            evidence of a monotonic trend under the assumptions
+            of the implemented resampling procedure.
+            """)
+
+        else:
+
+            st.markdown("""
+            The current analysis does not establish statistically
+            significant evidence of a monotonic trend under the
+            selected procedure.
+            """)
+
+        # ANNUAL FINDINGS
+
+        st.subheader("Annual Precipitation Pattern")
+
+        if regression is not None:
+
+            if regression.slope < 0:
+                annual_direction = "decreasing"
+            elif regression.slope > 0:
+                annual_direction = "increasing"
+            else:
+                annual_direction = "approximately stable"
+
+            st.markdown(
+                f"""
+                The annual mean regression indicates an
+                **{annual_direction}** direction.
+
+                The model R-squared is
+                **{regression.rvalue ** 2:.4f}**, representing
+                the proportion of variation explained by the
+                fitted linear model in the annual observations.
+                """
+            )
+
+        # SCIENTIFIC INTERPRETATION
+
+        st.subheader("Scientific Interpretation")
+
+        st.markdown("""
+        The results describe changes in the spatially averaged
+        precipitation rate for the selected Peru polygon.
+
+        They do not demonstrate that precipitation is decreasing
+        in every department, province or local ecosystem.
+
+        Additional regional analysis would be required to
+        identify geographic differences in precipitation trends.
+        """)
+
+        # RESEARCH CONCLUSION
+
+        st.subheader("Research Conclusion")
+
+        if seasonal_result["trend"] == "Decreasing":
+
+            conclusion = (
+                "The analysis identifies a decreasing seasonal "
+                "precipitation trend in the spatially averaged "
+                "NASA GPM observations selected for Peru. "
+                "The estimated Seasonal Sen's Slope is "
+                f"{sen_slope:.6f} mm/hr/year. "
+                "The result should be interpreted as an "
+                "exploratory national-scale signal, not as "
+                "evidence of uniform rainfall decline across "
+                "all regions of Peru."
+            )
+
+        elif seasonal_result["trend"] == "Increasing":
+
+            conclusion = (
+                "The analysis identifies an increasing seasonal "
+                "precipitation trend in the spatially averaged "
+                "NASA GPM observations selected for Peru. "
+                "Regional analysis is required before drawing "
+                "conclusions about individual locations."
+            )
+
+        elif seasonal_result["trend"] == "No statistically significant trend":
+
+            conclusion = (
+                "The analysis does not identify sufficient "
+                "statistical evidence of a monotonic seasonal "
+                "precipitation trend in the selected dataset."
+            )
+
+        else:
+
+            conclusion = (
+                "The available complete annual observations "
+                "are insufficient for the selected bootstrap "
+                "trend analysis."
+            )
+
+        st.info(conclusion)
+
+        # SCIENTIFIC LIMITATIONS
+
+        with st.expander("Scientific Limitations"):
+
+            st.markdown("""
+            - The analysis uses a spatially averaged precipitation
+              series for the selected Peru polygon.
+            - National averages can conceal regional differences.
+            - The block-bootstrap method is an approximate
+              sensitivity analysis, not an exact correction for
+              every form of temporal dependence.
+            - The selected block lengths may affect the results.
+            - The annual regression is complementary and does
+              not replace the seasonal trend analysis.
+            - Precipitation trends alone do not establish
+              climate-change causation.
+            - The observations end in September 2025.
+            """)
+
+        # =================================================
+        # 13. STATISTICAL METHODOLOGY
+        # =================================================
 
         with st.expander(
             "Statistical Methodology and Limitations"
         ):
 
-            if np.isfinite(seasonal_result["p_value"]):
+            p_value_text = (
+                f"{p_value:.8e}"
+                if np.isfinite(p_value)
+                else "Not available"
+            )
 
-                p_value_text = (
-                    f"{seasonal_result['p_value']:.8e}"
-                )
+            slope_text = (
+                f"{sen_slope:.8f} mm/hr/year"
+                if np.isfinite(sen_slope)
+                else "Not available"
+            )
 
-            else:
+            autocorrelation_text = (
+                f"{autocorrelation:.5f}"
+                if np.isfinite(autocorrelation)
+                else "Not available"
+            )
 
-                p_value_text = "Not available"
-
-            if np.isfinite(sen_slope):
-
-                slope_text = (
-                    f"{sen_slope:.8f} mm/hr/year"
-                )
-
-            else:
-
-                slope_text = "Not available"
-
-            if np.isfinite(autocorrelation):
-
-                autocorrelation_text = (
-                    f"{autocorrelation:.5f}"
-                )
-
-            else:
-
-                autocorrelation_text = "Not available"
-
-            if regression is not None:
-
-                regression_r2_text = (
-                    f"{regression.rvalue ** 2:.6f}"
-                )
-
-            else:
-
-                regression_r2_text = "Not available"
+            regression_r2_text = (
+                f"{regression.rvalue ** 2:.6f}"
+                if regression is not None
+                else "Not available"
+            )
 
             st.markdown(f"""
             **Seasonal Mann-Kendall with Block Bootstrap**
@@ -944,13 +1046,9 @@ try:
             causation.
             """)
 
-        # -------------------------------------------------
         # DATA TABLE
-        # -------------------------------------------------
 
-        with st.expander(
-            "View NASA GPM Data Records"
-        ):
+        with st.expander("View NASA GPM Data Records"):
 
             st.dataframe(
                 filtered_df,
@@ -958,9 +1056,7 @@ try:
                 hide_index=True
             )
 
-        # -------------------------------------------------
         # CSV DOWNLOAD
-        # -------------------------------------------------
 
         st.download_button(
             label="Download filtered data (CSV)",
@@ -974,9 +1070,7 @@ try:
 
 except Exception as error:
 
-    st.error(
-        f"Application error: {error}"
-    )
+    st.error(f"Application error: {error}")
 
     st.info(
         "Verify the dataset location, CSV structure "
@@ -985,7 +1079,7 @@ except Exception as error:
 
 
 # =========================================================
-# 12. FOOTER
+# 14. FOOTER
 # =========================================================
 
 st.divider()
