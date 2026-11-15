@@ -2,35 +2,35 @@
 import streamlit as st
 
 st.set_page_config(
-    page_title="ECOALERTA PERÚ",
+    page_title="ECOALERTA PERU",
     page_icon="🌎",
     layout="wide"
 )
 
-st.title("🌎 ECOALERTA PERÚ")
+st.title("🌎 ECOALERTA PERU")
+
 st.subheader("Earth System Trend Explorer")
 
+st.header("Detecting Precipitation Trends Across Peru")
+
 st.markdown("""
-### Detectando tendencias de precipitación en el Perú
+Developed by **SPACE HACKERS UPRIT**
+for the **NASA Space Apps Challenge**.
 
-Proyecto desarrollado por **SPACE HACKERS UPRIT**
-para NASA Space Apps Challenge.
-
-Utilizamos datos científicos de NASA GPM IMERG
-para estudiar los patrones de precipitación en el territorio peruano.
+We use NASA GPM IMERG satellite precipitation data
+to study rainfall patterns across Peruvian territory.
 """)
 
 st.info(
-    "Prototipo en desarrollo. "
-    "La integración y el análisis de datos NASA se incorporarán "
-    "en las siguientes etapas."
+    "Development prototype. NASA data integration "
+    "and scientific analysis are currently in progress."
 )
 
 st.divider()
 
-st.subheader("Explorador de tendencias")
+st.header("Precipitation Trend Explorer")
 
 st.write(
-    "Aquí presentaremos los resultados del análisis "
-    "de precipitación por regiones del Perú."
+    "Explore precipitation patterns and trends "
+    "across the different regions of Peru."
 )
