@@ -1,4 +1,5 @@
-﻿import streamlit as st
+﻿
+import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
@@ -6,6 +7,7 @@ import plotly.graph_objects as go
 
 from pathlib import Path
 from scipy.stats import linregress
+from weather_forecast import get_all_department_forecasts
 
 
 # =========================================================
@@ -87,7 +89,16 @@ def load_data():
 
 
 # =========================================================
-# 3. DATE UTILITIES
+# 3. WEATHER FORECAST
+# =========================================================
+
+@st.cache_data(ttl=3600)
+def load_department_forecasts():
+    return get_all_department_forecasts()
+
+
+# =========================================================
+# 4. DATE UTILITIES
 # =========================================================
 
 def decimal_year(dates):
@@ -99,7 +110,7 @@ def decimal_year(dates):
 
 
 # =========================================================
-# 4. SEASONAL SEN'S SLOPE
+# 5. SEASONAL SEN'S SLOPE
 # =========================================================
 
 def seasonal_sen_slope(df):
@@ -136,7 +147,7 @@ def seasonal_sen_slope(df):
 
 
 # =========================================================
-# 5. SEASONAL MANN-KENDALL STATISTIC
+# 6. SEASONAL MANN-KENDALL STATISTIC
 # =========================================================
 
 def seasonal_s_statistic(matrix):
@@ -157,7 +168,7 @@ def seasonal_s_statistic(matrix):
 
 
 # =========================================================
-# 6. BLOCK BOOTSTRAP SEASONAL MANN-KENDALL
+# 7. BLOCK BOOTSTRAP SEASONAL MANN-KENDALL
 # =========================================================
 
 def seasonal_mann_kendall_bootstrap(
@@ -183,7 +194,6 @@ def seasonal_mann_kendall_bootstrap(
         columns=range(1, 13)
     )
 
-    # Only complete calendar years are used.
     matrix_df = matrix_df.dropna(
         axis=0,
         how="any"
@@ -216,19 +226,17 @@ def seasonal_mann_kendall_bootstrap(
     if not np.isfinite(slope):
         slope = 0.0
 
-    # Remove the estimated trend under the null hypothesis.
-
     centered_years = years - years.mean()
 
     residuals = matrix - (
         slope * centered_years[:, np.newaxis]
     )
 
-    # Center each calendar month independently.
     residuals = residuals - residuals.mean(
         axis=0,
         keepdims=True
     )
+
     rng = np.random.default_rng(RANDOM_SEED)
 
     block_lengths = [2, 3, 4]
@@ -284,7 +292,6 @@ def seasonal_mann_kendall_bootstrap(
             empirical_p
         )
 
-    # Conservative sensitivity result.
     final_p_value = max(
         block_p_values.values()
     )
@@ -309,7 +316,7 @@ def seasonal_mann_kendall_bootstrap(
 
 
 # =========================================================
-# 7. TEMPORAL AUTOCORRELATION
+# 8. TEMPORAL AUTOCORRELATION
 # =========================================================
 
 def seasonal_autocorrelation(df):
@@ -351,7 +358,7 @@ def seasonal_autocorrelation(df):
 
 
 # =========================================================
-# 8. ANNUAL REGRESSION
+# 9. ANNUAL REGRESSION
 # =========================================================
 
 def annual_regression(df):
@@ -377,7 +384,7 @@ def annual_regression(df):
 
 
 # =========================================================
-# 9. APPLICATION HEADER
+# 10. APPLICATION HEADER
 # =========================================================
 
 st.title("🌎 ECOALERTA PERU")
@@ -395,7 +402,111 @@ st.divider()
 
 
 # =========================================================
-# 10. DATASET INFORMATION
+# 11. PERU WEATHER FORECAST
+# =========================================================
+
+st.header("🌦️ Peru Weather Forecast")
+
+st.write("""
+Explore precipitation and temperature forecasts
+for Peru's 24 departments and the Constitutional Province of Callao.
+""")
+
+try:
+
+    with st.spinner("Loading weather forecasts..."):
+
+        forecast_df = load_department_forecasts()
+
+    if not forecast_df.empty:
+
+        departments = sorted(
+            forecast_df["Departamento"].dropna().unique()
+        )
+
+        selected_department = st.selectbox(
+            "Select a department:",
+            departments
+        )
+
+        selected_data = forecast_df[
+            forecast_df["Departamento"] == selected_department
+        ].iloc[0]
+
+        st.subheader(
+            f"Weather Forecast: {selected_department}"
+        )
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        col1.metric(
+            "Precipitation",
+            f"{selected_data['Lluvia_mm']:.1f} mm"
+        )
+
+        col2.metric(
+            "Rain Probability",
+            f"{selected_data['Probabilidad_lluvia']}%"
+        )
+
+        col3.metric(
+            "Maximum Temperature",
+            f"{selected_data['Temperatura_max']:.1f} °C"
+        )
+
+        col4.metric(
+            "Minimum Temperature",
+            f"{selected_data['Temperatura_min']:.1f} °C"
+        )
+
+        st.caption(
+            f"Forecast date: {selected_data['Fecha']}"
+        )
+
+        st.subheader("National Weather Forecast")
+
+        display_df = forecast_df.rename(
+            columns={
+                "Departamento": "Department",
+                "Fecha": "Date",
+                "Lluvia_mm": "Precipitation (mm)",
+                "Probabilidad_lluvia": "Rain Probability (%)",
+                "Temperatura_max": "Maximum Temperature (°C)",
+                "Temperatura_min": "Minimum Temperature (°C)",
+                "Estado": "Status"
+            }
+        )
+
+        st.dataframe(
+            display_df,
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.caption(
+            f"Available locations: {len(forecast_df)} of 25"
+        )
+
+        st.caption("""
+        Forecasts represent reference-location coordinates,
+        not spatial averages for entire departments.
+        """)
+
+    else:
+
+        st.warning("No weather forecast data available.")
+
+except Exception as e:
+
+    st.error(
+        f"Unable to load weather forecasts: {e}"
+    )
+
+st.divider()
+
+
+# =========================================================
+# 12. NASA GPM DATASET INFORMATION
 # =========================================================
 
 st.header("NASA GPM IMERG Dataset")
@@ -403,18 +514,18 @@ st.header("NASA GPM IMERG Dataset")
 st.markdown("""
 - **Source:** NASA Global Precipitation Measurement
 - **Product:** GPM_3IMERGM Version 07
-- **Variable:** Merged satellite-gauge precipitation estimate -“ Final Run
+- **Variable:** Merged satellite-gauge precipitation estimate - Final Run
 - **Temporal resolution:** Monthly
 - **Spatial selection:** Peru
 - **Measurement unit:** mm/hr
-- **Observation period:** January 1998 -“ September 2025
+- **Observation period:** January 1998 - September 2025
 """)
 
 st.divider()
 
 
 # =========================================================
-# 11. MAIN DASHBOARD
+# 13. MAIN HISTORICAL DASHBOARD
 # =========================================================
 
 try:
@@ -422,8 +533,6 @@ try:
     df = load_data()
 
     st.success("NASA GPM dataset loaded successfully.")
-
-    # DATA QUALITY
 
     expected_dates = pd.date_range(
         start=df["Date"].min().to_period("M").to_timestamp(),
@@ -441,11 +550,16 @@ try:
 
     col1, col2, col3 = st.columns(3)
 
-    col1.metric("Valid Monthly Records", f"{len(df):,}")
+    col1.metric(
+        "Valid Monthly Records",
+        f"{len(df):,}"
+    )
+
     col2.metric(
         "First Observation",
         df["Date"].min().strftime("%B %Y")
     )
+
     col3.metric(
         "Latest Observation",
         df["Date"].max().strftime("%B %Y")
@@ -463,7 +577,9 @@ try:
 
     st.divider()
 
+    # =====================================================
     # DATE FILTER
+    # =====================================================
 
     st.header("Precipitation Trend Explorer")
 
@@ -474,7 +590,8 @@ try:
         "Select analysis period",
         value=(min_date, max_date),
         min_value=min_date,
-        max_value=max_date
+        max_value=max_date,
+        format="YYYY/MM/DD"
     )
 
     if (
@@ -485,14 +602,24 @@ try:
         start_date, end_date = selected_dates
 
         filtered_df = df[
-            (df["Date"].dt.date >= start_date)
-            & (df["Date"].dt.date <= end_date)
+            (df["Date"].dt.date >= start_date) &
+            (df["Date"].dt.date <= end_date)
         ].copy()
 
     else:
-        filtered_df = df.copy()
 
-    if len(filtered_df) < 24:
+        filtered_df = pd.DataFrame(
+            columns=df.columns
+        )
+
+    if filtered_df.empty:
+
+        st.warning(
+            "Select both a start date and an end date "
+            "within the available NASA GPM observation period."
+        )
+
+    elif len(filtered_df) < 24:
 
         st.warning(
             "At least 24 monthly observations are recommended "
@@ -501,7 +628,14 @@ try:
 
     else:
 
+        st.success(
+            f"Showing {len(filtered_df)} monthly records "
+            f"from {start_date} to {end_date}."
+        )
+
+        # =================================================
         # MONTHLY TIME SERIES
+        # =================================================
 
         st.subheader("Monthly Precipitation Time Series")
 
@@ -525,7 +659,9 @@ try:
             use_container_width=True
         )
 
+        # =================================================
         # DESCRIPTIVE STATISTICS
+        # =================================================
 
         st.header("Descriptive Statistics")
 
@@ -548,7 +684,9 @@ try:
 
         st.divider()
 
+        # =================================================
         # STATISTICAL ANALYSIS
+        # =================================================
 
         st.header("Statistical Trend Analysis")
 
@@ -572,7 +710,9 @@ try:
             filtered_df
         )
 
-        # METRICS
+        # =================================================
+        # STATISTICAL METRICS
+        # =================================================
 
         col_a, col_b, col_c = st.columns(3)
 
@@ -599,7 +739,9 @@ try:
             else "Not available"
         )
 
+        # =================================================
         # TREND CLASSIFICATION
+        # =================================================
 
         st.subheader("Trend Classification")
 
@@ -636,7 +778,9 @@ try:
                 "to perform the block-bootstrap analysis."
             )
 
+        # =================================================
         # BOOTSTRAP SENSITIVITY
+        # =================================================
 
         st.subheader("Block Bootstrap Sensitivity Analysis")
 
@@ -672,7 +816,9 @@ try:
                 f"Random seed: {RANDOM_SEED}"
             )
 
+        # =================================================
         # AUTOCORRELATION DIAGNOSTIC
+        # =================================================
 
         st.subheader("Temporal Dependence Diagnostic")
 
@@ -699,7 +845,9 @@ try:
                 "Autocorrelation could not be estimated reliably."
             )
 
+        # =================================================
         # ANNUAL REGRESSION
+        # =================================================
 
         st.divider()
 
@@ -767,7 +915,7 @@ try:
             )
 
         # =================================================
-        # 12. KEY SCIENTIFIC FINDINGS
+        # KEY SCIENTIFIC FINDINGS
         # =================================================
 
         st.divider()
@@ -813,7 +961,9 @@ try:
             block-bootstrap seasonal analysis.
             """)
 
+        # =================================================
         # SCIENTIFIC EVIDENCE
+        # =================================================
 
         st.subheader("Scientific Evidence")
 
@@ -857,7 +1007,9 @@ try:
             selected procedure.
             """)
 
+        # =================================================
         # ANNUAL FINDINGS
+        # =================================================
 
         st.subheader("Annual Precipitation Pattern")
 
@@ -865,15 +1017,17 @@ try:
 
             if regression.slope < 0:
                 annual_direction = "decreasing"
+
             elif regression.slope > 0:
                 annual_direction = "increasing"
+
             else:
                 annual_direction = "approximately stable"
 
             st.markdown(
                 f"""
-                The annual mean regression indicates an
-                **{annual_direction}** direction.
+                The annual mean regression indicates a
+                **{annual_direction}** trend.
 
                 The model R-squared is
                 **{regression.rvalue ** 2:.4f}**, representing
@@ -882,7 +1036,9 @@ try:
                 """
             )
 
+        # =================================================
         # SCIENTIFIC INTERPRETATION
+        # =================================================
 
         st.subheader("Scientific Interpretation")
 
@@ -897,7 +1053,9 @@ try:
         identify geographic differences in precipitation trends.
         """)
 
+        # =================================================
         # RESEARCH CONCLUSION
+        # =================================================
 
         st.subheader("Research Conclusion")
 
@@ -943,7 +1101,9 @@ try:
 
         st.info(conclusion)
 
+        # =================================================
         # SCIENTIFIC LIMITATIONS
+        # =================================================
 
         with st.expander("Scientific Limitations"):
 
@@ -963,7 +1123,7 @@ try:
             """)
 
         # =================================================
-        # 13. STATISTICAL METHODOLOGY
+        # STATISTICAL METHODOLOGY
         # =================================================
 
         with st.expander(
@@ -1045,7 +1205,9 @@ try:
             causation.
             """)
 
+        # =================================================
         # DATA TABLE
+        # =================================================
 
         with st.expander("View NASA GPM Data Records"):
 
@@ -1055,7 +1217,9 @@ try:
                 hide_index=True
             )
 
+        # =================================================
         # CSV DOWNLOAD
+        # =================================================
 
         st.download_button(
             label="Download filtered data (CSV)",
