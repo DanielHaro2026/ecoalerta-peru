@@ -6,7 +6,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from pathlib import Path
-from scipy.stats import norm, linregress
+from scipy.stats import linregress
 
 
 # =========================================================
@@ -64,7 +64,6 @@ def load_data():
         )
 
     df = df[required_columns].copy()
-
     df.columns = ["Date", "Precipitation"]
 
     df["Date"] = pd.to_datetime(
@@ -145,9 +144,7 @@ def seasonal_sen_slope(df):
                     / time_difference[valid]
                 )
 
-                slopes.extend(
-                    pairwise_slopes.tolist()
-                )
+                slopes.extend(pairwise_slopes.tolist())
 
     if not slopes:
         return np.nan
@@ -166,10 +163,7 @@ def seasonal_s_statistic(matrix):
     for month_index in range(matrix.shape[1]):
 
         values = matrix[:, month_index]
-
-        values = values[
-            np.isfinite(values)
-        ]
+        values = values[np.isfinite(values)]
 
         for i in range(len(values) - 1):
 
@@ -207,7 +201,7 @@ def seasonal_mann_kendall_bootstrap(
         columns=range(1, 13)
     )
 
-    # Use complete calendar years for annual block resampling.
+    # Use complete calendar years for block resampling.
     matrix_df = matrix_df.dropna(
         axis=0,
         how="any"
@@ -242,8 +236,7 @@ def seasonal_mann_kendall_bootstrap(
     if not np.isfinite(estimated_slope):
         estimated_slope = 0.0
 
-    # Remove the estimated trend to construct a
-    # detrended residual series under the null hypothesis.
+    # Detrend the observations before resampling.
     centered_years = years - years.mean()
 
     residuals = matrix - (
@@ -384,9 +377,7 @@ def seasonal_autocorrelation(df):
     if not correlations:
         return np.nan
 
-    return float(
-        np.median(correlations)
-    )
+    return float(np.median(correlations))
 
 
 # =========================================================
@@ -396,7 +387,6 @@ def seasonal_autocorrelation(df):
 def annual_regression(df):
 
     data = df.copy()
-
     data["Year"] = data["Date"].dt.year
 
     annual = (
@@ -856,58 +846,78 @@ try:
             )
 
         # -------------------------------------------------
-        # METHODOLOGY AND LIMITATIONS
+        # STATISTICAL METHODOLOGY AND LIMITATIONS
         # -------------------------------------------------
 
         with st.expander(
             "Statistical Methodology and Limitations"
         ):
 
+            if np.isfinite(seasonal_result["p_value"]):
+
+                p_value_text = (
+                    f"{seasonal_result['p_value']:.8e}"
+                )
+
+            else:
+
+                p_value_text = "Not available"
+
+            if np.isfinite(sen_slope):
+
+                slope_text = (
+                    f"{sen_slope:.8f} mm/hr/year"
+                )
+
+            else:
+
+                slope_text = "Not available"
+
+            if np.isfinite(autocorrelation):
+
+                autocorrelation_text = (
+                    f"{autocorrelation:.5f}"
+                )
+
+            else:
+
+                autocorrelation_text = "Not available"
+
+            if regression is not None:
+
+                regression_r2_text = (
+                    f"{regression.rvalue ** 2:.6f}"
+                )
+
+            else:
+
+                regression_r2_text = "Not available"
+
             st.markdown(f"""
             **Seasonal Mann-Kendall with Block Bootstrap**
 
             - S statistic: {seasonal_result['S']}
-            - Reported empirical p-value: {
-                seasonal_result['p_value']:.8e
-                if np.isfinite(seasonal_result['p_value'])
-                else 'Not available'
-            }
-            - Complete calendar years: {
-                seasonal_result['complete_years']
-            }
-            - Bootstrap repetitions per block length: {
-                seasonal_result['bootstrap_reps']
-            }
+            - Reported empirical p-value: {p_value_text}
+            - Complete calendar years: {seasonal_result['complete_years']}
+            - Bootstrap repetitions per block length: {seasonal_result['bootstrap_reps']}
             - Block lengths: 2, 3 and 4 years.
             - Reported p-value: maximum across evaluated block lengths.
 
             **Seasonal Sen's Slope**
 
-            - Estimated slope: {
-                f"{sen_slope:.8f} mm/hr/year"
-                if np.isfinite(sen_slope)
-                else "Not available"
-            }
+            - Estimated slope: {slope_text}
             - Pairwise slopes are calculated only between
               observations from the same calendar month.
 
             **Temporal Dependence**
 
-            - Median lag-1 autocorrelation: {
-                f"{autocorrelation:.5f}"
-                if np.isfinite(autocorrelation)
-                else "Not available"
-            }
+            - Median lag-1 autocorrelation: {autocorrelation_text}
             - This diagnostic does not establish independence.
 
             **Annual Linear Regression**
 
             - Annual observations: {len(annual)}
-            - Regression R-squared: {
-                f"{regression.rvalue ** 2:.6f}"
-                if regression is not None
-                else "Not available"
-            }
+            - Regression R-squared: {regression_r2_text}
 
             **Methodological Limitations**
 
