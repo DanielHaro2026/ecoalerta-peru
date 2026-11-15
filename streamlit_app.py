@@ -6,7 +6,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from pathlib import Path
-from scipy.stats import theilslopes, linregress, norm
+from scipy.stats import norm, linregress
 
 # =====================================================
 # PAGE CONFIGURATION
@@ -24,8 +24,9 @@ DATA_FILE = BASE_DIR / "data" / "nasa_gpm_peru_1998_2025.csv"
 FILL_VALUE = -9999.9
 ALPHA = 0.05
 
+
 # =====================================================
-# LOAD NASA DATA
+# LOAD NASA GPM DATA
 # =====================================================
 
 @st.cache_data
@@ -53,7 +54,6 @@ def load_data():
         )
 
     df = df[[date_col, value_col]].copy()
-
     df.columns = ["Date", "Precipitation"]
 
     df["Date"] = pd.to_datetime(
@@ -85,36 +85,51 @@ def load_data():
 
 
 # =====================================================
+# DATE CONVERSION
+# =====================================================
+
+def decimal_year(dates):
+
+    return (
+        dates.dt.year
+        + (dates.dt.dayofyear - 1) / 365.2425
+    ).to_numpy(dtype=float)
+
+
+# =====================================================
 # SEASONAL MANN-KENDALL TEST
 # =====================================================
 
-def seasonal_mann_kendall(values, months):
+def seasonal_mann_kendall(df):
 
-    values = np.asarray(values, dtype=float)
-    months = np.asarray(months)
+    data = df[["Date", "Precipitation"]].dropna().copy()
+    data["Month"] = data["Date"].dt.month
 
-    S_total = 0
-    variance_total = 0
+    total_s = 0
+    total_variance = 0
 
-    for month in np.unique(months):
+    for _, group in data.groupby("Month"):
 
-        sample = values[months == month]
-        n = len(sample)
+        values = group.sort_values("Date")[
+            "Precipitation"
+        ].to_numpy(dtype=float)
+
+        n = len(values)
 
         if n < 2:
             continue
 
-        S_month = 0
+        month_s = 0
 
         for i in range(n - 1):
-            S_month += np.sum(
-                np.sign(sample[i + 1:] - sample[i])
-            )
+            month_s += np.sign(
+                values[i + 1:] - values[i]
+            ).sum()
 
-        S_total += S_month
+        total_s += month_s
 
         _, counts = np.unique(
-            sample,
+            values,
             return_counts=True
         )
 
@@ -122,79 +137,157 @@ def seasonal_mann_kendall(values, months):
             counts * (counts - 1) * (2 * counts + 5)
         )
 
-        variance_total += (
+        month_variance = (
             n * (n - 1) * (2 * n + 5) - tie_term
         ) / 18
 
-    if variance_total <= 0:
+        total_variance += month_variance
+
+    if total_variance <= 0:
+
         return {
-            "S": S_total,
+            "S": int(total_s),
             "Z": 0.0,
             "p_value": 1.0,
-            "trend": "No detectable trend"
+            "trend": "No statistically significant trend"
         }
 
-    if S_total > 0:
-        Z = (S_total - 1) / np.sqrt(variance_total)
-    elif S_total < 0:
-        Z = (S_total + 1) / np.sqrt(variance_total)
+    if total_s > 0:
+        z_value = (
+            total_s - 1
+        ) / np.sqrt(total_variance)
+
+    elif total_s < 0:
+        z_value = (
+            total_s + 1
+        ) / np.sqrt(total_variance)
+
     else:
-        Z = 0.0
+        z_value = 0.0
 
-    p_value = 2 * norm.sf(abs(Z))
+    p_value = 2 * norm.sf(abs(z_value))
 
-    if p_value < ALPHA and Z > 0:
+    if p_value < ALPHA and z_value > 0:
         trend = "Increasing"
-    elif p_value < ALPHA and Z < 0:
+
+    elif p_value < ALPHA and z_value < 0:
         trend = "Decreasing"
+
     else:
         trend = "No statistically significant trend"
 
     return {
-        "S": S_total,
-        "Z": Z,
-        "p_value": p_value,
+        "S": int(total_s),
+        "Z": float(z_value),
+        "p_value": float(p_value),
         "trend": trend
     }
 
 
 # =====================================================
-# SEN'S SLOPE
+# SEASONAL SEN'S SLOPE
 # =====================================================
 
-def calculate_sen_slope(df):
+def seasonal_sen_slope(df):
 
-    x = (
-        df["Date"].dt.year
-        + (df["Date"].dt.dayofyear - 1) / 365.2425
-    ).to_numpy()
+    data = df[["Date", "Precipitation"]].dropna().copy()
 
-    y = df["Precipitation"].to_numpy()
+    data["Month"] = data["Date"].dt.month
+    data["Year"] = decimal_year(data["Date"])
 
-    if len(y) < 2:
-        return np.nan, np.nan, np.nan
+    slopes = []
 
-    result = theilslopes(y, x)
+    for _, group in data.groupby("Month"):
 
-    return result.slope, result.low_slope, result.high_slope
+        group = group.sort_values("Year")
+
+        x = group["Year"].to_numpy(dtype=float)
+        y = group["Precipitation"].to_numpy(dtype=float)
+
+        for i in range(len(y) - 1):
+
+            time_difference = x[i + 1:] - x[i]
+            value_difference = y[i + 1:] - y[i]
+
+            valid = time_difference > 0
+
+            if valid.any():
+
+                month_slopes = (
+                    value_difference[valid]
+                    / time_difference[valid]
+                )
+
+                slopes.extend(month_slopes.tolist())
+
+    if not slopes:
+        return np.nan
+
+    return float(np.median(slopes))
 
 
 # =====================================================
-# LINEAR REGRESSION
+# LAG-1 AUTOCORRELATION DIAGNOSTIC
 # =====================================================
 
-def calculate_regression(df):
+def seasonal_autocorrelation(df):
 
-    x = (
-        df["Date"].dt.year
-        + (df["Date"].dt.dayofyear - 1) / 365.2425
-    ).to_numpy()
+    data = df[["Date", "Precipitation"]].dropna().copy()
+    data["Month"] = data["Date"].dt.month
 
-    y = df["Precipitation"].to_numpy()
+    correlations = []
 
-    result = linregress(x, y)
+    for _, group in data.groupby("Month"):
 
-    return result
+        values = group.sort_values("Date")[
+            "Precipitation"
+        ].to_numpy(dtype=float)
+
+        if len(values) < 4:
+            continue
+
+        first = values[:-1]
+        second = values[1:]
+
+        if np.std(first) == 0 or np.std(second) == 0:
+            continue
+
+        correlation = np.corrcoef(first, second)[0, 1]
+
+        if np.isfinite(correlation):
+            correlations.append(correlation)
+
+    if not correlations:
+        return np.nan
+
+    return float(np.median(correlations))
+
+
+# =====================================================
+# ANNUAL MEAN REGRESSION
+# =====================================================
+
+def annual_regression(df):
+
+    data = df.copy()
+
+    data["Year"] = data["Date"].dt.year
+
+    annual = (
+        data.groupby("Year")["Precipitation"]
+        .mean()
+        .reset_index()
+    )
+
+    if len(annual) < 3:
+        return annual, None
+
+    regression = linregress(
+        annual["Year"].to_numpy(dtype=float),
+        annual["Precipitation"].to_numpy(dtype=float)
+    )
+
+    return annual, regression
 
 
 # =====================================================
@@ -214,6 +307,7 @@ using NASA GPM IMERG satellite observations.
 
 st.divider()
 
+
 # =====================================================
 # DATASET INFORMATION
 # =====================================================
@@ -229,6 +323,9 @@ st.markdown("""
 - **Measurement unit:** mm/hr
 """)
 
+st.divider()
+
+
 # =====================================================
 # MAIN DASHBOARD
 # =====================================================
@@ -239,11 +336,54 @@ try:
 
     st.success("NASA GPM dataset loaded successfully.")
 
+    # -------------------------------------------------
+    # DATA QUALITY INFORMATION
+    # -------------------------------------------------
+
+    expected_dates = pd.date_range(
+        start=df["Date"].min(),
+        end=df["Date"].max(),
+        freq="MS"
+    )
+
+    observed_dates = pd.DatetimeIndex(
+        df["Date"].dt.to_period("M").dt.to_timestamp()
+    )
+
+    missing_months = len(
+        expected_dates.difference(observed_dates)
+    )
+
     col1, col2, col3 = st.columns(3)
 
-    col1.metric("Valid Monthly Records", f"{len(df):,}")
-    col2.metric("First Observation", df["Date"].min().strftime("%B %Y"))
-    col3.metric("Latest Observation", df["Date"].max().strftime("%B %Y"))
+    col1.metric(
+        "Valid Monthly Records",
+        f"{len(df):,}"
+    )
+
+    col2.metric(
+        "First Observation",
+        df["Date"].min().strftime("%B %Y")
+    )
+
+    col3.metric(
+        "Latest Observation",
+        df["Date"].max().strftime("%B %Y")
+    )
+
+    if missing_months > 0:
+
+        st.warning(
+            f"Data quality notice: {missing_months} "
+            "calendar months are missing from the dataset."
+        )
+
+    else:
+
+        st.info(
+            "No missing calendar months were detected "
+            "between the first and last observations."
+        )
 
     st.divider()
 
@@ -263,7 +403,10 @@ try:
         max_value=max_date
     )
 
-    if isinstance(selected_dates, (tuple, list)) and len(selected_dates) == 2:
+    if (
+        isinstance(selected_dates, (tuple, list))
+        and len(selected_dates) == 2
+    ):
 
         start_date, end_date = selected_dates
 
@@ -273,6 +416,7 @@ try:
         ].copy()
 
     else:
+
         filtered_df = df.copy()
 
     if len(filtered_df) < 24:
@@ -285,7 +429,7 @@ try:
     else:
 
         # -------------------------------------------------
-        # TIME SERIES
+        # MONTHLY TIME SERIES
         # -------------------------------------------------
 
         st.subheader("Monthly Precipitation Time Series")
@@ -333,45 +477,64 @@ try:
             f"{filtered_df['Precipitation'].min():.4f} mm/hr"
         )
 
+        st.divider()
+
         # -------------------------------------------------
-        # STATISTICAL ANALYSIS
+        # STATISTICAL TREND ANALYSIS
         # -------------------------------------------------
 
-        st.divider()
         st.header("Statistical Trend Analysis")
 
         st.markdown("""
-        The following tests evaluate the direction and magnitude
-        of precipitation changes over the selected period.
+        Seasonal statistical methods are used to evaluate
+        precipitation trends while accounting for the
+        monthly seasonal structure.
         """)
 
         seasonal_result = seasonal_mann_kendall(
-            filtered_df["Precipitation"].to_numpy(),
-            filtered_df["Date"].dt.month.to_numpy()
-        )
-
-        sen_slope, sen_low, sen_high = calculate_sen_slope(
             filtered_df
         )
 
-        regression = calculate_regression(filtered_df)
+        sen_slope = seasonal_sen_slope(
+            filtered_df
+        )
+
+        autocorrelation = seasonal_autocorrelation(
+            filtered_df
+        )
+
+        annual, regression = annual_regression(
+            filtered_df
+        )
+
+        # -------------------------------------------------
+        # STATISTICAL METRICS
+        # -------------------------------------------------
 
         col_a, col_b, col_c = st.columns(3)
 
         col_a.metric(
-            "Mann-Kendall p-value",
-            f"{seasonal_result['p_value']:.5f}"
+            "Seasonal Mann-Kendall p-value",
+            f"{seasonal_result['p_value']:.3e}"
         )
 
         col_b.metric(
-            "Sen's Slope",
+            "Seasonal Sen's Slope",
             f"{sen_slope:.6f} mm/hr/year"
+            if np.isfinite(sen_slope)
+            else "Not available"
         )
 
         col_c.metric(
-            "Linear Regression R²",
-            f"{regression.rvalue ** 2:.4f}"
+            "Median Lag-1 Autocorrelation",
+            f"{autocorrelation:.4f}"
+            if np.isfinite(autocorrelation)
+            else "Not available"
         )
+
+        # -------------------------------------------------
+        # TREND CLASSIFICATION
+        # -------------------------------------------------
 
         st.subheader("Trend Classification")
 
@@ -381,91 +544,175 @@ try:
         )
 
         if seasonal_result["p_value"] < ALPHA:
+
             st.success(
-                "The test indicates a statistically significant "
-                "monotonic trend at the 5% significance level."
+                "The seasonal Mann-Kendall test indicates "
+                "a statistically significant monotonic trend "
+                "at the 5% significance level, under its "
+                "independence assumption."
             )
+
         else:
+
             st.warning(
                 "The test does not provide sufficient evidence "
                 "of a monotonic trend at the 5% significance level."
             )
 
         # -------------------------------------------------
-        # REGRESSION CHART
+        # AUTOCORRELATION WARNING
         # -------------------------------------------------
 
-        regression_line = (
-            regression.intercept
-            + regression.slope * (
-                filtered_df["Date"].dt.year
-                + (
-                    filtered_df["Date"].dt.dayofyear - 1
-                ) / 365.2425
+        st.subheader("Temporal Dependence Diagnostic")
+
+        if np.isfinite(autocorrelation):
+
+            if abs(autocorrelation) >= 0.3:
+
+                st.warning(
+                    "Potential temporal dependence detected. "
+                    "The p-value has not been adjusted for "
+                    "serial autocorrelation and should be "
+                    "interpreted cautiously."
+                )
+
+            else:
+
+                st.info(
+                    "The median lag-1 autocorrelation is below "
+                    "the diagnostic threshold of 0.30. This "
+                    "does not prove temporal independence."
+                )
+
+        else:
+
+            st.warning(
+                "Autocorrelation could not be estimated "
+                "reliably for the selected period."
             )
-        )
-
-        trend_fig = go.Figure()
-
-        trend_fig.add_trace(
-            go.Scatter(
-                x=filtered_df["Date"],
-                y=filtered_df["Precipitation"],
-                mode="lines",
-                name="Observed precipitation"
-            )
-        )
-
-        trend_fig.add_trace(
-            go.Scatter(
-                x=filtered_df["Date"],
-                y=regression_line,
-                mode="lines",
-                name="Linear regression"
-            )
-        )
-
-        trend_fig.update_layout(
-            title="Observed Precipitation and Linear Trend",
-            xaxis_title="Date",
-            yaxis_title="Precipitation (mm/hr)",
-            hovermode="x unified"
-        )
-
-        st.plotly_chart(
-            trend_fig,
-            use_container_width=True
-        )
 
         # -------------------------------------------------
-        # METHOD NOTES
+        # ANNUAL REGRESSION
+        # -------------------------------------------------
+
+        st.divider()
+
+        st.subheader("Annual Mean Precipitation Trend")
+
+        if regression is not None:
+
+            col_d, col_e, col_f = st.columns(3)
+
+            col_d.metric(
+                "Annual Regression R²",
+                f"{regression.rvalue ** 2:.4f}"
+            )
+
+            col_e.metric(
+                "Annual Regression Slope",
+                f"{regression.slope:.6f} mm/hr/year"
+            )
+
+            col_f.metric(
+                "Annual Regression p-value",
+                f"{regression.pvalue:.3e}"
+            )
+
+            annual_fig = go.Figure()
+
+            annual_fig.add_trace(
+                go.Scatter(
+                    x=annual["Year"],
+                    y=annual["Precipitation"],
+                    mode="lines+markers",
+                    name="Annual mean precipitation"
+                )
+            )
+
+            annual_fig.add_trace(
+                go.Scatter(
+                    x=annual["Year"],
+                    y=regression.intercept
+                    + regression.slope * annual["Year"],
+                    mode="lines",
+                    name="Annual linear regression"
+                )
+            )
+
+            annual_fig.update_layout(
+                title="Annual Mean Precipitation and Linear Trend",
+                xaxis_title="Year",
+                yaxis_title="Annual Mean Precipitation (mm/hr)",
+                hovermode="x unified"
+            )
+
+            st.plotly_chart(
+                annual_fig,
+                use_container_width=True
+            )
+
+        else:
+
+            st.info(
+                "At least three annual observations are required "
+                "for annual linear regression."
+            )
+
+        # -------------------------------------------------
+        # STATISTICAL METHODOLOGY
         # -------------------------------------------------
 
         with st.expander("Statistical Methodology"):
 
             st.markdown(f"""
-            **Seasonal Mann-Kendall**
+            **Seasonal Mann-Kendall Test**
 
             - S statistic: {seasonal_result['S']}
-            - Z statistic: {seasonal_result['Z']:.4f}
-            - p-value: {seasonal_result['p_value']:.6f}
+            - Z statistic: {seasonal_result['Z']:.5f}
+            - p-value: {seasonal_result['p_value']:.8e}
             - Significance level: {ALPHA}
+            - Method: comparisons between observations
+              from the same calendar month across years.
 
-            **Sen's Slope**
+            **Seasonal Sen's Slope**
 
             - Estimated slope: {sen_slope:.8f} mm/hr/year
-            - Lower confidence limit: {sen_low:.8f}
-            - Upper confidence limit: {sen_high:.8f}
+              if available.
+            - Method: median of pairwise slopes calculated
+              within the same calendar month.
 
-            **Linear Regression**
+            **Temporal Dependence Diagnostic**
 
-            - Slope: {regression.slope:.8f}
+            - Median lag-1 autocorrelation:
+              {autocorrelation:.5f}
+            - Diagnostic threshold: 0.30
+            - The p-value is not adjusted for serial
+              autocorrelation.
+
+            **Annual Linear Regression**
+
+            - Annual observations: {len(annual)}
+            - Slope: {regression.slope:.8f} mm/hr/year
+              if available.
             - R-squared: {regression.rvalue ** 2:.6f}
-            - Regression p-value: {regression.pvalue:.6f}
+              if available.
 
-            Results are exploratory. Serial correlation,
-            data homogeneity and other assumptions require
-            additional scientific evaluation.
+            **Interpretation and Limitations**
+
+            The seasonal Mann-Kendall test and seasonal
+            Sen's slope compare the same calendar months
+            across different years.
+
+            The autocorrelation value is a diagnostic only.
+            It does not correct the Mann-Kendall variance
+            or its p-value.
+
+            Annual regression is based on annual mean
+            precipitation rates and is presented as a
+            complementary analysis.
+
+            Results are exploratory and do not establish
+            causation or regional rainfall patterns within Peru.
             """)
 
         # -------------------------------------------------
@@ -493,11 +740,14 @@ try:
 
 except Exception as error:
 
-    st.error(f"Dataset loading error: {error}")
+    st.error(
+        f"Dataset loading error: {error}"
+    )
 
     st.info(
         "Check the NASA CSV file and its expected column names."
     )
+
 
 # =====================================================
 # FOOTER
