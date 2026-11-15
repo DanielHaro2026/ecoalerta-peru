@@ -1,2 +1,1 @@
-# ecoalerta-peru
-Plataforma de análisis de tendencias de precipitación en Perú con datos NASA GPM IMERG
+Interactive platform for analyzing long-term precipitation trends in Peru using NASA GPM IMERG satellite data, statistical methods, and dynamic visualizations.
